@@ -74,8 +74,7 @@ def get_args_parser():
 
 
 def format_prompt(prompt):
-    prompt_t=f"Below is an instruction that describes a task.\nWrite a response that appropriately completes the request.\n\n### Instruction:\n{prompt}\n\n### Response:"
-    return prompt_t
+    return f"Below is an instruction that describes a task.\nWrite a response that appropriately completes the request.\n\n### Instruction:\n{prompt}\n\n### Response:"
 
 def split_list(lst, n):
     """Split a list into n (roughly) equal-sized chunks"""
@@ -107,8 +106,8 @@ def load(args):
             return_unused_kwargs=False,
         )
         quantize(model, quantization_config)
-        
-    print("Model = %s" % str(model))
+
+    print(f"Model = {str(model)}")
     model.bfloat16().cuda()
     return model
 
@@ -124,47 +123,44 @@ def generate_output(model, img_path, prompt):
 
     if image is not None:
         image = image.cuda()
-    
+
     with torch.cuda.amp.autocast(dtype=torch.bfloat16):
         results = model.generate([_prompt], image, max_gen_len=512, temperature=0.1, top_p=0.7)
-    text_output = results[0].strip()
-    return text_output
+    return results[0].strip()
 
 def eval_MMVet_benchmark(model, args):
 
     answers_file = os.path.expanduser(args.answers_file)
     results={}
     os.makedirs(os.path.dirname(answers_file), exist_ok=True)
-    ans_file = open(answers_file, "w")
-    
-    with open(args.question_file, "r") as file:
-        data = json.loads(file.read())
-    for key, value in data.items():
-        idx = key
-        image_file = value["imagename"]
-        qs=value["question"]
-
-        image_path = os.path.join(args.image_folder, image_file)
-        prompt = qs
+    with open(answers_file, "w") as ans_file:
+        with open(args.question_file, "r") as file:
+            data = json.loads(file.read())
         times=0
-        output_text = generate_output(
-            model = model,
-            img_path = image_path,
-            prompt = prompt)
+        for key, value in data.items():
+            idx = key
+            image_file = value["imagename"]
+            qs=value["question"]
 
-        res= {
-            "idx": idx,
-            "output_text": output_text
-        }
+            image_path = os.path.join(args.image_folder, image_file)
+            prompt = qs
+            output_text = generate_output(
+                model = model,
+                img_path = image_path,
+                prompt = prompt)
 
-        key = idx
-        context= output_text
-        results[key] = context        
+            res= {
+                "idx": idx,
+                "output_text": output_text
+            }
 
-    output_json = json.dumps(results, indent=4)
-    ans_file.write(output_json)
-    ans_file.flush()
-    ans_file.close()
+            key = idx
+            context= output_text
+            results[key] = context        
+
+        output_json = json.dumps(results, indent=4)
+        ans_file.write(output_json)
+        ans_file.flush()
     
 
     
@@ -180,7 +176,7 @@ def scores(args):
         with open(bard_set_file, 'r') as f:
             sub_set = json.load(f)
         sub_set_name = 'bardset'
-        sub_set_name = sub_set_name + '_'
+        sub_set_name += '_'
     else:
         sub_set = None
         sub_set_name = ''
@@ -208,7 +204,7 @@ def scores(args):
             cap_set_counter.append(1)
         else:
             cap_set_counter[cap_set_list.index(cap)] += 1
-        
+
         len_data += 1
 
     sorted_list = counter.most_common()
@@ -235,7 +231,7 @@ def scores(args):
     columns2.append("std")
     columns2.append('runs')
     df2 = pd.DataFrame(columns=columns2)
-    
+
     model = args.model_name
     result_path = f"MMVet_result/{args.model_name}"
 
@@ -250,8 +246,8 @@ def scores(args):
     cap_score_file = os.path.join(result_path, cap_score_file)
     cap_int_score_file = f'{model}_{sub_set_name}{gpt_model}-cap-int-score-{num_run}runs.csv'
     cap_int_score_file = os.path.join(result_path, cap_int_score_file)
-    
-    
+
+
     with open(model_results_file) as f:
         results = json.load(f)
     if os.path.exists(grade_file):
@@ -268,7 +264,7 @@ def scores(args):
                     need_more_runs = True
                     break
         return need_more_runs or len(grade_results) < len_data
-    
+
     while need_more_runs():
         for j in range(num_run):
             print(f'eval run {j}')
@@ -279,7 +275,7 @@ def scores(args):
                     continue
 
                 model_pred = results[id]
-                
+
                 question = prompt + '\n' + ' | '.join([line['question'], line['answer'].replace("<AND>", " <AND> ").replace("<OR>", " <OR> "), model_pred, ""])
                 messages = [
                 {"role": "user", "content": question},
@@ -290,11 +286,11 @@ def scores(args):
                 else:
                     sample_grade = grade_results[id]
 
-                
+
                 grade_sample_run_complete = False
                 temperature = 0.0
                 openai.api_key = args.openai_key
-                
+
                 while not grade_sample_run_complete:
                     try:
                         response = openai.ChatCompletion.create(
@@ -348,7 +344,7 @@ def scores(args):
 
                 with open(grade_file, 'w') as f:
                     json.dump(grade_results, f, indent=4)
-                    
+
     assert not need_more_runs()
     cap_socres = {k: [0.0]*num_run for k in columns[:-2]}
     counter['total'] = len_data
@@ -365,7 +361,7 @@ def scores(args):
             caps = set(data[k]['capability'])
             for c in caps:
                 cap_socres[c][i] += score
-            
+
             cap_socres['total'][i] += score
 
             index = cap_set_list.index(caps)
@@ -382,18 +378,18 @@ def scores(args):
 
     for k, v in cap_socres.items():
         cap_socres[k] = round(v.mean(), decimal_places)
- 
+
 
     cap_socres['std'] = std
     cap_socres['runs'] = runs
-    
+
     # when use subset, please note the column order is different from the full set
     # because it ranks by numbers of capabilties/capability integrations
-    
+
     print("#####result1#####")
     for key, value in cap_socres.items():
         print(f"{key}: {value}")
-    
+
     df.loc[model] = cap_socres
 
 

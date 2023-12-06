@@ -16,7 +16,7 @@ def train_one_epoch(model: torch.nn.Module,
     model.train(True)
     metric_logger = misc.MetricLogger(delimiter="  ")
     metric_logger.add_meter('lr', misc.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-    header = 'Epoch: [{}]'.format(epoch)
+    header = f'Epoch: [{epoch}]'
     print_freq = 10
 
     accum_iter = args.accum_iter
@@ -26,7 +26,7 @@ def train_one_epoch(model: torch.nn.Module,
     dataset_state = {}
 
     if log_writer is not None:
-        print('log_dir: {}'.format(log_writer.log_dir))
+        print(f'log_dir: {log_writer.log_dir}')
     for data_iter_step, (examples, labels, example_mask, item_states) in enumerate(
         metric_logger.log_every(data_loader, print_freq, header, start_iter), start=start_iter
     ):
@@ -45,7 +45,7 @@ def train_one_epoch(model: torch.nn.Module,
         loss_value = loss.item()
         c_loss_value = c_loss.item()
         if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
+            print(f"Loss is {loss_value}, stopping training")
             sys.exit(1)
 
         loss /= accum_iter
@@ -118,11 +118,11 @@ def val_one_epoch(model: torch.nn.Module,
     print("!!!start validation!!!")
     model.eval()
     metric_logger = misc.MetricLogger(delimiter="  ")
-    header = 'Epoch: [{}]'.format(epoch)
+    header = f'Epoch: [{epoch}]'
     print_freq = 10
 
     if log_writer is not None:
-        print('log_dir: {}'.format(log_writer.log_dir))
+        print(f'log_dir: {log_writer.log_dir}')
     for data_iter_step, (examples, labels, example_mask) in enumerate(metric_logger.log_every(data_loader, print_freq, header)):
 
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
@@ -131,7 +131,7 @@ def val_one_epoch(model: torch.nn.Module,
         loss_value = loss.item()
         c_loss_value = c_loss.item()
         if not math.isfinite(loss_value):
-            print("Loss is {}, stopping training".format(loss_value))
+            print(f"Loss is {loss_value}, stopping training")
             sys.exit(1)
 
         metric_logger.update(closs=c_loss_value)

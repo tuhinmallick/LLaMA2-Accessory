@@ -85,11 +85,7 @@ def entry_point(
     results to f"{sample_file}_results.jsonl.gz"
     """
     k = list(map(int, k.split(",")))
-    results = evaluate_functional_correctness(
-        sample_file, k, n_workers, timeout
-    )
-
-    return results
+    return evaluate_functional_correctness(sample_file, k, n_workers, timeout)
 
 def filter_code(completion: str) -> str:
     # The program tends to overwrite, we only take the first function
@@ -100,12 +96,7 @@ def fix_indents(text: str) -> str:
     return text.replace("\t", "    ")
 
 def split_batch(samples: list[str], size=4):
-    mini_batches = []
-
-    for i in range(0, len(samples), size):
-        mini_batches.append(samples[i : i + size])
-
-    return mini_batches
+    return [samples[i : i + size] for i in range(0, len(samples), size)]
 
 @torch.inference_mode()
 def generate_batch_completion(

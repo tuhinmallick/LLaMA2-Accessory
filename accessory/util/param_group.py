@@ -22,14 +22,15 @@ def _layerwise_param_group_func(
     group for all keys starting with a specific prefix.
     """
     def inner_func(
-        func: BlockwiseParamGroupFuncType
-    ) -> BlockwiseParamGroupFuncType:
+            func: BlockwiseParamGroupFuncType
+        ) -> BlockwiseParamGroupFuncType:
         global _LAYERWISE_PARAM_GROUP_FUNCS
-        assert prefix not in _LAYERWISE_PARAM_GROUP_FUNCS, (
-            "Repeated registration of prefix: " + prefix
-        )
+        assert (
+            prefix not in _LAYERWISE_PARAM_GROUP_FUNCS
+        ), f"Repeated registration of prefix: {prefix}"
         _LAYERWISE_PARAM_GROUP_FUNCS[prefix] = func
         return func
+
     return inner_func
 
 
@@ -157,7 +158,7 @@ def make_param_groups(
     )
 
     def get_fqn(module_name: str, param_name: str):
-        return module_name + "." + param_name if module_name else param_name
+        return f"{module_name}.{param_name}" if module_name else param_name
 
     def match_and_strip_prefix(prefix: str,
                                src_dict: Dict[str, Any]) -> Dict[str, Any]:
@@ -167,9 +168,9 @@ def make_param_groups(
         }
 
     def dfs_find_params_and_clean_names(
-        module: nn.Module, prefix: str,
-        sharded_views_original_shape: Dict[str, torch.Size],
-    ) -> None:
+            module: nn.Module, prefix: str,
+            sharded_views_original_shape: Dict[str, torch.Size],
+        ) -> None:
         state = _get_module_state(module)
         if isinstance(module, CheckpointWrapper):
             # The special points for CheckpointWrappers are:
@@ -239,13 +240,14 @@ def make_param_groups(
                         param, device="meta", requires_grad=param.requires_grad
                     )
                 clean_name_to_meta_param_dict[fqn] = meta_param
-    
+
             for name, submodule in module.named_children():
                 dfs_find_params_and_clean_names(
-                    submodule, prefix=get_fqn(prefix, name),
+                    submodule,
+                    prefix=get_fqn(prefix, name),
                     sharded_views_original_shape=match_and_strip_prefix(
-                        name + ".", sharded_views_original_shape
-                    )
+                        f"{name}.", sharded_views_original_shape
+                    ),
                 )
 
     dfs_find_params_and_clean_names(model, "", {})

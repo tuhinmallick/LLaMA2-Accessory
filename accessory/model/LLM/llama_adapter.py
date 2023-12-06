@@ -187,11 +187,10 @@ class Attention(nn.Module):
             keys = keys.transpose(1, 2)
             values = values.transpose(1, 2)
             if isinstance(mask, str):
-                if is_causal:
-                    mask = self._make_causal_mask(xq.size(2), keys.size(2))
-                    mask = mask.to(xq.device, non_blocking=True)
-                else:
+                if not is_causal:
                     raise NotImplementedError()
+                mask = self._make_causal_mask(xq.size(2), keys.size(2))
+                mask = mask.to(xq.device, non_blocking=True)
             output = F.scaled_dot_product_attention(xq, keys, values, dropout_p=0.0, attn_mask=mask)
 
             if prefix is not None:
@@ -222,8 +221,7 @@ class Attention(nn.Module):
     def _make_causal_mask(self, q_len: int, kv_len: int) -> torch.Tensor:
         q_indices = torch.arange(q_len) - q_len
         kv_indices = torch.arange(kv_len) - kv_len
-        causal_mask_bool = q_indices.view(-1, 1) >= kv_indices.view(1, -1)
-        return causal_mask_bool
+        return q_indices.view(-1, 1) >= kv_indices.view(1, -1)
 
 class FeedForward(nn.Module):
     def __init__(
@@ -293,8 +291,7 @@ class TransformerBlock(nn.Module):
         prefix_new_gate: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         h = self._forward_attention(x, start_pos, freqs_cis, mask, prefix, prefix_gate, prefix_new_gate)
-        out = self._forward_ffn(h)
-        return out
+        return self._forward_ffn(h)
 
 
 class Transformer(nn.Module):
@@ -384,9 +381,9 @@ class Transformer(nn.Module):
                 trainable_key_words = ['norm', 'bias', 'prefix', 'lora']
             else:
                 raise ValueError(f"unknown trainable_mode: {self.args.trainable_mode}")
-            if any([name.startswith(_) for _ in exclude_prefix]): # only tune those within real llama
+            if any(name.startswith(_) for _ in exclude_prefix): # only tune those within real llama
                 continue
-            if any([_ in name for _ in trainable_key_words]):
+            if any(_ in name for _ in trainable_key_words):
                 trainable[name] = para
 
         return trainable
@@ -450,16 +447,13 @@ class Transformer(nn.Module):
         freqs_cis = self.freqs_cis[:seqlen]
         for layer in self.layers[:-1 * self.prefix_layers]:
             h = layer(h, start_pos=0, freqs_cis=freqs_cis, mask="causal")
-        prefix_index = 0
-        for layer in self.layers[-1 * self.prefix_layers:]:
+        for prefix_index, layer in enumerate(self.layers[-1 * self.prefix_layers:]):
             prefix_gate_this_layer = self.prefix_gate[prefix_index]
             prefix_new_gate_this_layer = self.prefix_new_gate[prefix_index]
             prefix_this_layer = actual_prefix[prefix_index]
             h = layer(h, start_pos=0, freqs_cis=freqs_cis, mask="causal",
                       prefix=prefix_this_layer, prefix_gate=prefix_gate_this_layer,
                       prefix_new_gate=prefix_new_gate_this_layer)
-            prefix_index += 1
-
         h = self.norm(h)
         output = self.output(h)
         return output
@@ -488,16 +482,13 @@ class Transformer(nn.Module):
 
         for layer in self.layers[:-1 * self.prefix_layers]:
             h = layer(h, start_pos=start_pos, freqs_cis=freqs_cis, mask=mask)
-        prefix_index = 0
-        for layer in self.layers[-1 * self.prefix_layers:]:
+        for prefix_index, layer in enumerate(self.layers[-1 * self.prefix_layers:]):
             prefix_gate_this_layer = self.prefix_gate[prefix_index]
             prefix_new_gate_this_layer = self.prefix_new_gate[prefix_index]
             prefix_this_layer = self.cache_actual_prefix[prefix_index]
             h = layer(h, start_pos=start_pos, freqs_cis=freqs_cis, mask=mask,
                       prefix=prefix_this_layer, prefix_gate=prefix_gate_this_layer,
                       prefix_new_gate=prefix_new_gate_this_layer)
-            prefix_index += 1
-
         h = self.norm(h)
         output = self.output(h[:, -1, :])  # only compute last logits
         return output

@@ -29,7 +29,7 @@ class Dataset(torch.utils.data.Dataset):
         elif list_path.endswith(".parquet"):
             df = pd.read_parquet(list_path)
         else:
-            raise NotImplementedError("List path has unknown extension: " + list_path)
+            raise NotImplementedError(f"List path has unknown extension: {list_path}")
 
         self.urls = df["url"].tolist()
         self.transform = get_transform("padded_resize", image_size)
@@ -49,8 +49,7 @@ def get_local_indices(rank: int, world_size: int, dataset_len: int) -> List[int]
     indices = list(range(dataset_len))
     while len(indices) % world_size != 0:
         indices.extend(indices[: world_size - len(indices) % world_size])
-    indices = indices[rank::world_size]
-    return indices
+    return indices[rank::world_size]
 
 
 def main() -> None:

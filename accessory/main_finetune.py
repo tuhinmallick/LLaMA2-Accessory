@@ -148,8 +148,8 @@ def main(args):
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
-    print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
-    print("{}".format(args).replace(', ', ',\n'))
+    print(f'job dir: {os.path.dirname(os.path.realpath(__file__))}')
+    print(f"{args}".replace(', ', ',\n'))
 
     device = torch.device(args.device)
 
@@ -202,7 +202,7 @@ def main(args):
                     return_unused_kwargs=False,
                 )
                 quantize(model, quantization_config)
-                
+
                 # will (1) release CPU memory usage, and (2) occupy GPU memory.
                 model.cuda() 
             torch.distributed.barrier()
@@ -216,7 +216,7 @@ def main(args):
         misc.print_param_status(model)
         print(f"load pretrained from {args.pretrained_path}")
         load_tensor_parallel_model(model, args.pretrained_path, args.pretrained_type)
-    print("Unwrapped Model = %s" % str(model))
+    print(f"Unwrapped Model = {str(model)}")
 
     # resume stage1
     if args.resume:
@@ -263,7 +263,7 @@ def main(args):
         check_fn = lambda submodule: isinstance(submodule, TransformerBlock)
         apply_activation_checkpointing(model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn)
 
-    print("Model = %s" % str(model))
+    print(f"Model = {str(model)}")
 
     eff_batch_size = args.batch_size * args.accum_iter * fs_init.get_data_parallel_world_size()
     print("effective batch size: %d" % eff_batch_size)
@@ -275,10 +275,7 @@ def main(args):
     loss_scaler = NativeScaler(args)
 
     # data
-    if args.dialog:
-        DatasetClass = FinetuneDialogDataset
-    else:
-        DatasetClass = FinetuneDataset
+    DatasetClass = FinetuneDialogDataset if args.dialog else FinetuneDataset
     dataset_train = DatasetClass(
         args.data_config, transform=get_transform(args.image_transform, getattr(model.llma, 'image_size', 224)),
         max_words=args.max_words, image_words=model.get_image_words(), tokenizer_path=args.tokenizer_path,
@@ -346,7 +343,7 @@ def main(args):
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time {}'.format(total_time_str))
+    print(f'Training time {total_time_str}')
 
 
 if __name__ == '__main__':

@@ -226,8 +226,4 @@ class LoraRowParallelLinear(RowParallelLinear):
         if self.lora_a is not None:
             modification = self.lora_b(self.lora_a(input_parallel))
             output_ = output_ + modification
-        if self.bias is not None:
-            output = output_ + self.bias
-        else:
-            output = output_
-        return output
+        return output_ + self.bias if self.bias is not None else output_

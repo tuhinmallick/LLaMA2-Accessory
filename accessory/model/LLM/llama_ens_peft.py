@@ -137,21 +137,12 @@ class Attention(nn.Module):
             values = self.v_cache[:bsz, :start_pos + seqlen]
 
         is_causal = isinstance(mask, str) and mask == "causal"
-        # "causal" dispatches to flash_attn only when q and k have the same seqlen
-        # because currently the flash_attn causal impl for unequal q & k length is not suited
-        # for generation: Generation with cache requires aligning on the right, while the
-        # current flash_attn impl aligns on the left. For example, we expect the mask to be
-        # as the left one, while the current flash_attn impl gives the right one
-        #
-        #              K                     K
-        #        1 1 1 1 1 0 0         1 0 0 0 0 0 0
-        #     Q  1 1 1 1 1 1 0       Q 1 1 0 0 0 0 0
-        #        1 1 1 1 1 1 1         1 1 1 0 0 0 0
-        use_flash = (
+        if use_flash := (
             self.flash  # user configuration
-            and (mask is None or (is_causal and keys.size(1) == xq.size(1)))  # supported mask
-        )
-        if use_flash:
+            and (
+                mask is None or (is_causal and keys.size(1) == xq.size(1))
+            )  # supported mask
+        ):
             # repeating k/v heads is included in flash_attn
             output = flash_attn_func(xq, keys, values, dropout_p=0.0, causal=is_causal)
             output = output.contiguous().view(bsz, seqlen, -1)
@@ -164,11 +155,10 @@ class Attention(nn.Module):
             keys = keys.transpose(1, 2)
             values = values.transpose(1, 2)
             if isinstance(mask, str):
-                if is_causal:
-                    mask = self._make_causal_mask(xq.size(2), keys.size(2))
-                    mask = mask.to(xq.device, non_blocking=True)
-                else:
+                if not is_causal:
                     raise NotImplementedError()
+                mask = self._make_causal_mask(xq.size(2), keys.size(2))
+                mask = mask.to(xq.device, non_blocking=True)
             output = F.scaled_dot_product_attention(xq, keys, values, dropout_p=0.0, attn_mask=mask)
             output = output.transpose(
                 1, 2
@@ -189,8 +179,7 @@ class Attention(nn.Module):
     def _make_causal_mask(self, q_len: int, kv_len: int) -> torch.Tensor:
         q_indices = torch.arange(q_len) - q_len
         kv_indices = torch.arange(kv_len) - kv_len
-        causal_mask_bool = q_indices.view(-1, 1) >= kv_indices.view(1, -1)
-        return causal_mask_bool
+        return q_indices.view(-1, 1) >= kv_indices.view(1, -1)
 
 class FeedForward(nn.Module):
     def __init__(
@@ -258,8 +247,7 @@ class TransformerBlock(nn.Module):
         mask: Union[torch.Tensor, str, None]
     ) -> torch.Tensor:
         h = self._forward_attention(x, start_pos, freqs_cis, mask)
-        out = self._forward_ffn(h)
-        return out
+        return self._forward_ffn(h)
 
 
 class Transformer(nn.Module):
@@ -356,10 +344,10 @@ class Transformer(nn.Module):
         trainable = {}
         no_train_key_words = ["qformer.", "openclip_convnext_xxl.", "clip.", "dinov2_vitg14.", "_proj"]
         for name, para in self.named_parameters():
-            if any([_ in name for _ in no_train_key_words]):
+            if any(_ in name for _ in no_train_key_words):
                 continue
             trainable_key_words = ['norm', 'bias', 'lora']
-            if any([_ in name for _ in trainable_key_words]):
+            if any(_ in name for _ in trainable_key_words):
                 trainable[name] = para
 
         return trainable
@@ -501,16 +489,15 @@ class Transformer(nn.Module):
             self.cache_image_words = image_tokens.shape[1] + 1 + 1
             h = torch.cat((h_bos, self.start_img.repeat(_bsz, 1, 1), image_tokens, self.end_img.repeat(_bsz, 1, 1), h_caption), dim=1)
             seqlen = h.shape[1]
-            freqs_cis = self.freqs_cis[0: seqlen]
+            freqs_cis = self.freqs_cis[:seqlen]
+        elif start_pos == 0:
+            self.cache_image_words = 0
+            freqs_cis = self.freqs_cis[:seqlen]
         else:
-            if start_pos == 0:
-                self.cache_image_words = 0
-                freqs_cis = self.freqs_cis[0: seqlen]
-            else:
                 # if image was not None when start_pos=0,
                 # the offset should be added to start_pos within later forward_inference calls
-                start_pos = start_pos + self.cache_image_words
-                freqs_cis = self.freqs_cis[start_pos: start_pos + seqlen]
+            start_pos += self.cache_image_words
+            freqs_cis = self.freqs_cis[start_pos: start_pos + seqlen]
 
         # Despite that "causal" also works for seqlen == 1, keep it to None for possibly
         # better performance

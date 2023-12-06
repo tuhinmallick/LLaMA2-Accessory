@@ -15,7 +15,7 @@ def main(data_path):
                         'output': data.split('Output:')[1]})
     file_name = data_path.split('/')[-1].split('.')[0]
     path_dir = data_path.rsplit('/', 1)[0]
-    with open(os.path.join(path_dir, file_name+'_formatted.json'), 'w') as f:
+    with open(os.path.join(path_dir, f'{file_name}_formatted.json'), 'w') as f:
         json.dump(samples, f)
 
 

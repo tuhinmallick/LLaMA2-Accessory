@@ -128,21 +128,12 @@ class Attention(nn.Module):
             values = self.v_cache[:bsz, :start_pos + seqlen]
 
         is_causal = isinstance(mask, str) and mask == "causal"
-        # "causal" dispatches to flash_attn only when q and k have the same seqlen
-        # because currently the flash_attn causal impl for unequal q & k length is not suited
-        # for generation: Generation with cache requires aligning on the right, while the
-        # current flash_attn impl aligns on the left. For example, we expect the mask to be
-        # as the left one, while the current flash_attn impl gives the right one
-        #
-        #              K                     K
-        #        1 1 1 1 1 0 0         1 0 0 0 0 0 0
-        #     Q  1 1 1 1 1 1 0       Q 1 1 0 0 0 0 0
-        #        1 1 1 1 1 1 1         1 1 1 0 0 0 0
-        use_flash = (
+        if use_flash := (
             self.flash  # user configuration
-            and (mask is None or (is_causal and keys.size(1) == xq.size(1)))  # supported mask
-        )
-        if use_flash:
+            and (
+                mask is None or (is_causal and keys.size(1) == xq.size(1))
+            )  # supported mask
+        ):
             # repeating k/v heads is included in flash_attn
             output = flash_attn_func(xq, keys, values, dropout_p=0.0, causal=is_causal)
             output = output.contiguous().view(bsz, seqlen, -1)
@@ -155,11 +146,10 @@ class Attention(nn.Module):
             keys = keys.transpose(1, 2)
             values = values.transpose(1, 2)
             if isinstance(mask, str):
-                if is_causal:
-                    mask = self._make_causal_mask(xq.size(2), keys.size(2))
-                    mask = mask.to(xq.device, non_blocking=True)
-                else:
+                if not is_causal:
                     raise NotImplementedError()
+                mask = self._make_causal_mask(xq.size(2), keys.size(2))
+                mask = mask.to(xq.device, non_blocking=True)
             output = F.scaled_dot_product_attention(xq, keys, values, dropout_p=0.0, attn_mask=mask)
             output = output.transpose(
                 1, 2
@@ -180,8 +170,7 @@ class Attention(nn.Module):
     def _make_causal_mask(self, q_len: int, kv_len: int) -> torch.Tensor:
         q_indices = torch.arange(q_len) - q_len
         kv_indices = torch.arange(kv_len) - kv_len
-        causal_mask_bool = q_indices.view(-1, 1) >= kv_indices.view(1, -1)
-        return causal_mask_bool
+        return q_indices.view(-1, 1) >= kv_indices.view(1, -1)
 
 class FeedForward(nn.Module):
     def __init__(
@@ -244,8 +233,7 @@ class TransformerBlock(nn.Module):
         mask: Union[torch.Tensor, str, None]
     ) -> torch.Tensor:
         h = self._forward_attention(x, start_pos, freqs_cis, mask)
-        out = self._forward_ffn(h)
-        return out
+        return self._forward_ffn(h)
 
 
 class Transformer(nn.Module):
@@ -339,13 +327,12 @@ class Transformer(nn.Module):
 
 
     def get_trainable_params(self):
-        trainable = {}
         no_train_prefix = ["qformer.", "openclip_convnext_xxl.", "clip.", "dinov2_vitg14."]
-        for name, para in self.named_parameters():
-            if not any([name.startswith(_) for _ in no_train_prefix]):
-                trainable[name] = para
-
-        return trainable
+        return {
+            name: para
+            for name, para in self.named_parameters()
+            if not any(name.startswith(_) for _ in no_train_prefix)
+        }
 
     @torch.no_grad()
     def clip_encode_image(self, x):
@@ -382,8 +369,10 @@ class Transformer(nn.Module):
         image_224 = F.interpolate(image.half(), size=(224,224), mode="bicubic").to(image)
         image_parts = []
         for y_start in range(0, image.shape[-2], 224):
-            for x_start in range(0, image.shape[-1], 224):
-                image_parts.append(image[...,y_start:y_start+224,x_start:x_start+224])
+            image_parts.extend(
+                image[..., y_start : y_start + 224, x_start : x_start + 224]
+                for x_start in range(0, image.shape[-1], 224)
+            )
         image: torch.Tensor = torch.cat([image_224] + image_parts, dim=0)
         n_views_per_image = len(image_parts) + 1
 
@@ -511,16 +500,15 @@ class Transformer(nn.Module):
             assert self.cache_image_words == self.image_words
             h = torch.cat((h_bos, image_tokens, h_caption), dim=1)
             seqlen = h.shape[1]
-            freqs_cis = self.freqs_cis[0: seqlen]
+            freqs_cis = self.freqs_cis[:seqlen]
+        elif start_pos == 0:
+            self.cache_image_words = 0
+            freqs_cis = self.freqs_cis[:seqlen]
         else:
-            if start_pos == 0:
-                self.cache_image_words = 0
-                freqs_cis = self.freqs_cis[0: seqlen]
-            else:
                 # if image was not None when start_pos=0,
                 # the offset should be added to start_pos within later forward_inference calls
-                start_pos = start_pos + self.cache_image_words
-                freqs_cis = self.freqs_cis[start_pos: start_pos + seqlen]
+            start_pos += self.cache_image_words
+            freqs_cis = self.freqs_cis[start_pos: start_pos + seqlen]
 
         # Despite that "causal" also works for seqlen == 1, keep it to None for possibly
         # better performance
@@ -545,8 +533,8 @@ class Transformer(nn.Module):
             "clip.", "openclip_convnext_xxl.", "dinov2_vitg14.", "qformer.",
             "visual_proj.", "qformer_proj.",
         ]
-        blocklist = []
-        for n, m in self.named_modules():
-            if any(n.startswith(x) for x in vision_prefixes):
-                blocklist.append(n)
-        return blocklist
+        return [
+            n
+            for n, m in self.named_modules()
+            if any(n.startswith(x) for x in vision_prefixes)
+        ]

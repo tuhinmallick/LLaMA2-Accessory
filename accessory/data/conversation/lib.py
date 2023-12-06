@@ -31,9 +31,9 @@ class Conversation:
                 if message is not None:
                     if type(message) is tuple:
                         message, _, _ = message
-                    ret += role + ": " + message + '\n' + self.sep
+                    ret += f"{role}: {message}" + '\n' + self.sep
                 else:
-                    ret += role + ":"
+                    ret += f"{role}:"
             return ret
         elif self.sep_style == SeparatorStyle.TWO:
             seps = [self.sep, self.sep2]
@@ -42,22 +42,21 @@ class Conversation:
                 if message:
                     if type(message) is tuple:
                         message, _, _ = message
-                    ret += role + ": " + message + seps[i % 2]
+                    ret += f"{role}: {message}{seps[i % 2]}"
                 else:
-                    ret += role + ":"
+                    ret += f"{role}:"
             return ret
-        if self.sep_style == SeparatorStyle.MPT:
-            ret = self.system + self.sep
-            for role, message in self.messages:
-                if message:
-                    if type(message) is tuple:
-                        message, _, _ = message
-                    ret += role + message + self.sep
-                else:
-                    ret += role
-            return ret
-        else:
+        if self.sep_style != SeparatorStyle.MPT:
             raise ValueError(f"Invalid style: {self.sep_style}")
+        ret = self.system + self.sep
+        for role, message in self.messages:
+            if message:
+                if type(message) is tuple:
+                    message, _, _ = message
+                ret += role + message + self.sep
+            else:
+                ret += role
+        return ret
 
     def append_message(self, role, message):
         self.messages.append([role, message])

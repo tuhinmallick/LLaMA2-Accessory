@@ -76,15 +76,13 @@ def _load_checkpoint_and_merge_ranks(
     local_num_shards = ckpt_mp_world_size // mp_world_size
     local_shard_st = local_num_shards * mp_rank
     local_shard_ed = local_num_shards * (mp_rank + 1)
-    ckpt_shards = []
     merged_ckpt = OrderedDict()
-    for shard_id in range(local_shard_st, local_shard_ed):
-        ckpt_shards.append(
-            load_tensor_parallel_shard_state_dict(
-                ckpt_path, format, shard_id, ckpt_mp_world_size
-            )
+    ckpt_shards = [
+        load_tensor_parallel_shard_state_dict(
+            ckpt_path, format, shard_id, ckpt_mp_world_size
         )
-
+        for shard_id in range(local_shard_st, local_shard_ed)
+    ]
     for key in list(ckpt_shards[0].keys()):
         param_shards = [shard[key] for shard in ckpt_shards]
         if key not in weight_parallel_dim:  # non tensor parallel parameter
@@ -174,8 +172,7 @@ def load_tensor_parallel_shard_state_dict(
         if "model" in shard and isinstance(shard["model"], dict):
             shard = shard["model"]
     elif format == "meta_ori":
-        shard = dict(("llma." + key, value)
-                     for key, value in shard.items())
+        shard = {f"llma.{key}": value for key, value in shard.items()}
     return shard
 
 
@@ -210,14 +207,14 @@ def load_tensor_parallel_model_state_dict(
         for class_, dict_ in _MODEL_PARALLEL_MODULES:
             if isinstance(module, class_):
                 for leaf_name, dim in dict_.items():
-                    full_name = name + "." + leaf_name if name else leaf_name
+                    full_name = f"{name}.{leaf_name}" if name else leaf_name
                     if dim >= 0:
                         weight_parallel_dim[full_name] = dim
                 break
 
     mp_world_size = fs_init.get_model_parallel_world_size()
 
-    if format in ["meta_ori", "consolidated", "consolidated_diff"]:
+    if format in {"meta_ori", "consolidated", "consolidated_diff"}:
         # meta_ori and consolidated are essentially the same format: Both
         # store weights of each model parallel rank in a separate file. The
         # minor differences are:
@@ -318,18 +315,20 @@ def infer_checkpoint_format_and_mp_size(path: str) -> str:
                        if os.path.isfile(os.path.join(path, fn))]
     inferred_format, inferred_mp_size = None, None
     for format, pattern in FORMAT_FILENAME_PATTERNS.items():
-        matched_fns = [fn for fn in files_in_folder if pattern.match(fn)]
-        if matched_fns:
-            if inferred_format is None:
-                inferred_format = format
-                inferred_mp_size = len(matched_fns)
-            else:
+        if matched_fns := [fn for fn in files_in_folder if pattern.match(fn)]:
+            if inferred_format is not None:
                 raise NotImplementedError(f"Multiple matched format detected: "
                                           f"{inferred_format} and {format}.")
+            inferred_format = format
+            inferred_mp_size = len(matched_fns)
     if inferred_format is None:
         folder_contents = ", ".join(
-            [x if os.path.isfile(os.path.join(path, x)) else x + " (not a file)"
-             for x in os.listdir(path)]
+            [
+                x
+                if os.path.isfile(os.path.join(path, x))
+                else f"{x} (not a file)"
+                for x in os.listdir(path)
+            ]
         )
         raise NotImplementedError(
             f"Files in the given folder do not match  any format. "
@@ -474,12 +473,12 @@ def tensor_load_shard(
             target_slices.append(slice(dim_st, dim_ed))
         else:
             target_slices.append(slice(None))
-    if parallel_dim == -1 and shard_id != 0 and mode in ["set", "add"]:
+    if parallel_dim == -1 and shard_id != 0 and mode in {"set", "add"}:
         return
-    if mode == "set":
-        target[target_slices] = value
-    elif mode == "add":
+    if mode == "add":
         target[target_slices] += value
+    elif mode == "set":
+        target[target_slices] = value
     else:
         raise NotImplementedError(f"Unknown mode: {mode}.")
 

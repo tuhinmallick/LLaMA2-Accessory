@@ -96,32 +96,26 @@ def extract_ans(completion):
 
     text = re.split("Question:", completion, flags=re.IGNORECASE)[0]
     text = re.split("answer is ", text, flags=re.IGNORECASE)
-    
-    if len(text) > 1:
-        extract_ans = text[-1].strip()
-        match = re.search(r'[\-+]?\d*[\.,/]?\d+', extract_ans)
-        if match:
-            if '/' in match.group():
-                denominator = match.group().split('/')[1]
-                numerator = match.group().split('/')[0]
-                if is_number(denominator) == True and is_number(numerator) == True:
-                    if denominator == '0':
-                        return round(float(numerator.replace(',', '')))
-                    else:
-                        frac = Fraction(match.group().replace(',', ''))
-                        num_numerator = frac.numerator
-                        num_denominator = frac.denominator
-                        return round(float(num_numerator / num_denominator))
-                else:
-                    return None
-            else:
-                if float(match.group().replace(',', '')) == float('inf'):
-                    return None
-                return round(float(match.group().replace(',', '')))
-        else:
-            return None
-    else:
+
+    if len(text) <= 1:
         return None
+    extract_ans = text[-1].strip()
+    if not (match := re.search(r'[\-+]?\d*[\.,/]?\d+', extract_ans)):
+        return None
+    if '/' not in match.group():
+        return (
+            None
+            if float(match.group().replace(',', '')) == float('inf')
+            else round(float(match.group().replace(',', '')))
+        )
+    denominator = match.group().split('/')[1]
+    numerator = match.group().split('/')[0]
+    if is_number(denominator) != True or is_number(numerator) != True:
+        return None
+    if denominator == '0':
+        return round(float(numerator.replace(',', '')))
+    frac = Fraction(match.group().replace(',', ''))
+    return round(float(frac.numerator / frac.denominator))
 
 def batch_data(prompts, batch_size=1):
     batch_data = []
@@ -146,16 +140,16 @@ def resize_prompt(tokenizer, model_max_context, prompt):
 
 def run_infer(model, max_seq_len, data_path, infer_path, overwrite = False):
 
-    infer_file = os.path.join(infer_path, f'gsm8k_infer.jsonl')
+    infer_file = os.path.join(infer_path, 'gsm8k_infer.jsonl')
     if not overwrite and os.path.exists(infer_file):
         print(f"{infer_file} existed, skip!")
         return
-    
+
     test_set = []
     answer_set = []
     fewshot_prompt = open("prompt/gsm8k_prompt.txt").read()
     with open(os.path.join(data_path, 'gsm8k_test.jsonl'),"r+", encoding="utf8") as f:
-        for idx, item in enumerate(jsonlines.Reader(f)):
+        for item in jsonlines.Reader(f):
             full_prompt = resize_prompt(
                 model.tokenizer,
                 max_seq_len,
@@ -176,9 +170,7 @@ def run_infer(model, max_seq_len, data_path, infer_path, overwrite = False):
 
         outputs = model.generate(prompts=batch_input, images=None, max_gen_len=512)
 
-        for output in outputs:
-            res_completions.append(output)
-    
+        res_completions.extend(iter(outputs))
     torch.distributed.barrier()
     if torch.distributed.get_rank() == 0:
 
@@ -193,17 +185,14 @@ def run_infer(model, max_seq_len, data_path, infer_path, overwrite = False):
 def run_eval(infer_path):
 
     infer_file = os.path.join(infer_path, 'gsm8k_infer.jsonl')
-    assert os.path.exists(infer_file) , f'ERROR: please run inference first!' 
+    assert os.path.exists(infer_file), 'ERROR: please run inference first!' 
 
-    score = {}
     results = []
     invalid_outputs = []
     with jsonlines.open(infer_file) as f:
         for item in f.iter(type=dict, skip_invalid=True):
             pred = extract_ans(item['completion'])
-            if pred != None:
-                results.append(float(pred) == float(item['target_ans']))
-            else:
+            if pred is None:
                 results.append(False)
                 temp = {
                     'output_split': re.split('Quetion:', item['completion'], flags=re.IGNORECASE)[0], 
@@ -211,8 +200,9 @@ def run_eval(infer_path):
                 }
                 invalid_outputs.append(temp)
 
-    score['TOTAL_AVERAGE'] = '%.4f' %(sum(results) / len(results))
-
+            else:
+                results.append(float(pred) == float(item['target_ans']))
+    score = {'TOTAL_AVERAGE': '%.4f' % (sum(results) / len(results))}
     return score, invalid_outputs 
 
 def main(args):

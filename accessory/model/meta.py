@@ -88,10 +88,8 @@ class MetaModel(nn.Module):
             raise ValueError("pretrained_path should be specified")
 
         if mp_group is None:
-            print(f"mp_group not provided. Load model with model parallel size == 1")
-            if dist.is_initialized():
-                mp_group = dist.new_group(ranks=[dist.get_rank()])
-            else:
+            print("mp_group not provided. Load model with model parallel size == 1")
+            if not dist.is_initialized():
                 warnings.warn(
                     "\n\n********************************\n"
                     "Warning: Torch distributed not initialized when invoking `MetaModel.from_pretrained`.\n"
@@ -105,7 +103,7 @@ class MetaModel(nn.Module):
                 torch.distributed.init_process_group(
                     backend="nccl", rank=0, world_size=1,
                     init_method=f"tcp://127.0.0.1:{misc.find_free_port(9000, 10000)}")
-                mp_group = dist.new_group(ranks=[dist.get_rank()])
+            mp_group = dist.new_group(ranks=[dist.get_rank()])
         else:
             print(f"Load model with model parallel size == {dist.get_world_size(mp_group)}")
 
@@ -136,7 +134,7 @@ class MetaModel(nn.Module):
 
         # determine tokenizer_path
         if tokenizer_path is None:  # first try setence-piece style
-            print(f"tokenizer_path not specified.")
+            print("tokenizer_path not specified.")
 
             print(f"trying to find sentencepiece-style tokenizer at {Path(pretrined_path[-1]) / 'tokenizer.model'}")
             if (Path(pretrined_path[-1])/'tokenizer.model').exists():
@@ -166,7 +164,7 @@ class MetaModel(nn.Module):
 
     def get_trainable_params(self):
         llma_trainable = self.llma.get_trainable_params()
-        return {"llma." + name: param for name, param in llma_trainable.items()}
+        return {f"llma.{name}": param for name, param in llma_trainable.items()}
 
 
     def _set_default_trainability(self):
@@ -197,11 +195,13 @@ class MetaModel(nn.Module):
         output = output[:, :-1, :]
         labels = labels[:, 1:]
 
-        if labels.sum() == 0:
-           c_loss = output.mean() * 0
-        else:
-           c_loss = self.criterion(output.reshape(-1, self.tokenizer.n_words), labels.flatten())
-        return c_loss
+        return (
+            output.mean() * 0
+            if labels.sum() == 0
+            else self.criterion(
+                output.reshape(-1, self.tokenizer.n_words), labels.flatten()
+            )
+        )
 
 
     @ torch.inference_mode()
@@ -221,8 +221,8 @@ class MetaModel(nn.Module):
         prompt_tokens = [self.tokenizer.encode(
             x, bos=True, eos=False) for x in prompts]
 
-        min_prompt_size = min([len(t) for t in prompt_tokens])
-        max_prompt_size = max([len(t) for t in prompt_tokens])
+        min_prompt_size = min(len(t) for t in prompt_tokens)
+        max_prompt_size = max(len(t) for t in prompt_tokens)
 
         max_seq_len = args.max_seq_len
         if images is not None:
@@ -240,7 +240,7 @@ class MetaModel(nn.Module):
 
         if return_logits:
             return self.llma.forward_inference(tokens[:, :start_pos], prev_pos, images if prev_pos == 0 else None)
-    
+
         for cur_pos in range(start_pos, total_len):
             logits = self.llma.forward_inference(tokens[:, prev_pos:cur_pos], prev_pos, images if prev_pos == 0 else None)
             if temperature > 0:
@@ -338,5 +338,5 @@ class MetaModel(nn.Module):
 
     def get_quant_blocklist(self) -> List[str]:
         if hasattr(self.llma, "get_quant_blocklist"):
-            return ["llma." + x for x in self.llma.get_quant_blocklist()]
+            return [f"llma.{x}" for x in self.llma.get_quant_blocklist()]
         return []

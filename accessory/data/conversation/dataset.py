@@ -44,15 +44,17 @@ class ConversationGenerator:
 
         """
         probe = "Probe am I"
-        sentence1 = self.tokenizer.encode(conversation_lib.default_conversation.roles[1] + ": " + probe,
-                                          bos=False, eos=False)
+        sentence1 = self.tokenizer.encode(
+            f"{conversation_lib.default_conversation.roles[1]}: {probe}",
+            bos=False,
+            eos=False,
+        )
         sentence2 = self.tokenizer.encode(probe,
                                           bos=False, eos=False)
         if sentence1[-len(sentence2):] == sentence2:
             self.space_before_to_predict = False
         else:
-            sentence3 = self.tokenizer.encode(" " + probe,
-                                              bos=False, eos=False)
+            sentence3 = self.tokenizer.encode(f" {probe}", bos=False, eos=False)
             assert sentence1[-len(sentence3):] == sentence3
             self.space_before_to_predict = True
 
@@ -82,7 +84,7 @@ class ConversationGenerator:
             if from_str == conversation_lib.default_conversation.roles[1]:
                 to_predict_value = value + END_SIGNAL + "###"
                 if self.space_before_to_predict:
-                    to_predict_value = " " + to_predict_value
+                    to_predict_value = f" {to_predict_value}"
                 to_predict_list.append(to_predict_value)
 
             if get_conversation:
@@ -127,20 +129,19 @@ class FinetuneDialogDataset(Dataset):
         #   prior experiments and runs, exists.
         if not cache_on_disk:
             need_collect_anno = True
-        else:
-            if rank != 0 :
-                need_collect_anno = False
+        elif rank == 0:
+            if (Path(self.cache_dir)/'data.h5').exists() and (Path(self.cache_dir)/'ready').exists():
+                need_collect_anno = False  # off-the-shelf annotation cache exists
+                print(f"Use existing h5 data cache: {Path(self.cache_dir)}\n"
+                      f"Note: if the actual data defined by {config_path} has changed since your last run, "
+                      f"please delete the cache manually and re-run this expeirment, or the data actually used "
+                      f"will not be updated")
             else:
-                if (Path(self.cache_dir)/'data.h5').exists() and (Path(self.cache_dir)/'ready').exists():
-                    need_collect_anno = False  # off-the-shelf annotation cache exists
-                    print(f"Use existing h5 data cache: {Path(self.cache_dir)}\n"
-                          f"Note: if the actual data defined by {config_path} has changed since your last run, "
-                          f"please delete the cache manually and re-run this expeirment, or the data actually used "
-                          f"will not be updated")
-                else:
-                    need_collect_anno = True
+                need_collect_anno = True
 
 
+        else:
+            need_collect_anno = False
         if need_collect_anno:
             group_ann = {}
             for meta in self.config['META']:
@@ -171,8 +172,12 @@ class FinetuneDialogDataset(Dataset):
                 group_ann[meta_type] += meta_l
 
             # sort group_ann for higher efficiency (items in one global batch with similar length)
-            for meta_type, meta_l in group_ann.items():
-                meta_l.sort(key=lambda data_item: sum([len(_['value']) for _ in data_item['conversations']]))
+            for meta_l in group_ann.values():
+                meta_l.sort(
+                    key=lambda data_item: sum(
+                        len(_['value']) for _ in data_item['conversations']
+                    )
+                )
 
             ann = sum(list(group_ann.values()), start=[])
             group_indice_range = {}
@@ -195,7 +200,7 @@ class FinetuneDialogDataset(Dataset):
                     file.create_dataset("group_indice_range", data=json.dumps(group_indice_range))
                 with open(Path(self.cache_dir)/'ready', 'w') as f:
                     f.write("ready")
-                print(f"data cache built")
+                print("data cache built")
 
         if self.cache_on_disk:
             while not (Path(self.cache_dir)/'ready').exists():
@@ -304,7 +309,4 @@ class FinetuneDialogDataset(Dataset):
 
 def find_sublist(a: list, b:list):
     len_a, len_b = len(a), len(b)
-    for i in range(len_a - len_b + 1):
-        if a[i:i+len_b] == b:
-            return i
-    return -1
+    return next((i for i in range(len_a - len_b + 1) if a[i:i+len_b] == b), -1)

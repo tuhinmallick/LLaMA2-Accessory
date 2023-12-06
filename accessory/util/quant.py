@@ -22,12 +22,11 @@ def forward_ColumnParallelLinear(self, input_: torch.Tensor) -> torch.Tensor:  #
     output_parallel = self.quanted_layer(input_parallel)
     if self.bias is not None:
         output_parallel = output_parallel + self.bias
-    if self.gather_output:
-        # All-gather across the partitions.
-        output = gather_from_model_parallel_region(output_parallel)
-    else:
-        output = output_parallel
-    return output
+    return (
+        gather_from_model_parallel_region(output_parallel)
+        if self.gather_output
+        else output_parallel
+    )
 
 def forward_RowParallelLinear(self, input_: torch.Tensor) -> torch.Tensor:  # type:ignore
     # Set up backprop all-reduce.
@@ -39,11 +38,7 @@ def forward_RowParallelLinear(self, input_: torch.Tensor) -> torch.Tensor:  # ty
     output_parallel = self.quanted_layer(input_parallel)
     # All-reduce across all the partitions.
     output_ = reduce_from_model_parallel_region(output_parallel)
-    if self.bias is not None:
-        output = output_ + self.bias
-    else:
-        output = output_
-    return output
+    return output_ + self.bias if self.bias is not None else output_
 
 def forward_LoraColumnParallelLinear(self, input_: torch.Tensor) -> torch.Tensor:  # type: ignore
     # Set up backprop all-reduce.
@@ -80,11 +75,7 @@ def forward_LoraRowParallelLinear(self, input_: torch.Tensor) -> torch.Tensor:  
     if self.lora_a is not None:
         modification = self.lora_b(self.lora_a(input_parallel))
         output_ = output_ + modification
-    if self.bias is not None:
-        output = output_ + self.bias
-    else:
-        output = output_
-    return output
+    return output_ + self.bias if self.bias is not None else output_
 
 def forward_Linear(self, input: torch.Tensor) -> torch.Tensor:
     output = self.quanted_layer(input)
@@ -141,10 +132,10 @@ def quantize(
                             module.weight.data.clone(), 
                             requires_grad=False,
                             #has_fp16_weights=quant_conf.llm_int8_has_fp16_weight,
-                        ) 
+                        )
             else:
-                raise NotImplementedError(f'Please determine the proper quantization type.')
-            
+                raise NotImplementedError('Please determine the proper quantization type.')
+
             # 2. Convert FP layer to quantized layer
             module.quanted_layer = quanted_layer
 
