@@ -132,8 +132,8 @@ def main(args):
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
 
-    print('job dir: {}'.format(os.path.dirname(os.path.realpath(__file__))))
-    print("{}".format(args).replace(', ', ',\n'))
+    print(f'job dir: {os.path.dirname(os.path.realpath(__file__))}')
+    print(f"{args}".replace(', ', ',\n'))
 
     device = torch.device(args.device)
 
@@ -165,13 +165,13 @@ def main(args):
     if args.pretrained_path:
         print(f"load pretrained from {args.pretrained_path}")
         misc.load_pretrained(args.pretrained_path, args.pretrained_type, model)
-    print("Unwrapped Model = %s" % str(model))
+    print(f"Unwrapped Model = {str(model)}")
 
     # resume stage1
     if args.resume:
         misc.resume_stage1(args, model_without_FSDP=model)
 
-    
+
     TransformerBlock = type(model.llma.layers[0])
 
     model = FSDP(
@@ -211,7 +211,7 @@ def main(args):
         check_fn = lambda submodule: isinstance(submodule, TransformerBlock)
         apply_activation_checkpointing(model, checkpoint_wrapper_fn=non_reentrant_wrapper, check_fn=check_fn)
 
-    print("Model = %s" % str(model))
+    print(f"Model = {str(model)}")
 
     eff_batch_size = args.batch_size * args.accum_iter * fs_init.get_data_parallel_world_size()
     print("effective batch size: %d" % eff_batch_size)
@@ -268,7 +268,7 @@ def main(args):
         _, start_iter = misc.resume_stage2(args=args, model=model, optimizer=optimizer,
                                            loss_scaler=loss_scaler, dataset_train=dataset_train)
 
-    print(f"Start training")
+    print("Start training")
     start_time = time.time()
 
     train_stats = train_one_epoch(
@@ -284,7 +284,7 @@ def main(args):
 
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
-    print('Training time {}'.format(total_time_str))
+    print(f'Training time {total_time_str}')
 
 
 if __name__ == '__main__':

@@ -91,18 +91,18 @@ def extract_ans(completion, answer):
 
     split_ans = re.split("Problem:", completion, flags=re.IGNORECASE)[0]
     split_ans = re.split("answer is ", split_ans, flags=re.IGNORECASE)
-    if len(split_ans) > 1:
-        ans = split_ans[-1]
-        extract_ans_temp = ans.split('.\n')[0]
-        extract_ans_temp = extract_ans_temp.strip()
-        if len(extract_ans_temp)>0 and extract_ans_temp[-1] == '.':
-            extract_ans = extract_ans_temp[0:-1]
-        else:
-            extract_ans = extract_ans_temp
-        extract_ans = extract_ans.strip()
-        return extract_ans
-    else:
+    if len(split_ans) <= 1:
         return None
+    ans = split_ans[-1]
+    extract_ans_temp = ans.split('.\n')[0]
+    extract_ans_temp = extract_ans_temp.strip()
+    extract_ans = (
+        extract_ans_temp[:-1]
+        if len(extract_ans_temp) > 0 and extract_ans_temp[-1] == '.'
+        else extract_ans_temp
+    )
+    extract_ans = extract_ans.strip()
+    return extract_ans
 
 def batch_data(prompts, batch_size=1):
     batch_data = []
@@ -127,16 +127,16 @@ def resize_prompt(tokenizer, model_max_context, prompt):
 
 def run_infer(model, max_seq_len, data_path, infer_path, overwrite = False):
 
-    infer_file = os.path.join(infer_path, f'math_infer.jsonl')
+    infer_file = os.path.join(infer_path, 'math_infer.jsonl')
     if not overwrite and os.path.exists(infer_file):
         print(f"{infer_file} existed, skip!")
         return
-    
+
     test_set = []
     answer_set = []
     few_shot_prompt = open("prompt/math_prompt.txt").read()
     with open(os.path.join(data_path, "MATH_test.jsonl"), "r+", encoding="utf8") as f:
-        for idx, item in enumerate(jsonlines.Reader(f)):
+        for item in jsonlines.Reader(f):
             full_prompt = resize_prompt(
                 model.tokenizer,
                 max_seq_len,
@@ -157,9 +157,7 @@ def run_infer(model, max_seq_len, data_path, infer_path, overwrite = False):
 
         outputs = model.generate(prompts=batch_input, images=None, max_gen_len=512)
 
-        for output in outputs:
-            res_completions.append(output)
-    
+        res_completions.extend(iter(outputs))
     torch.distributed.barrier()
     if torch.distributed.get_rank() == 0:
 
@@ -173,18 +171,15 @@ def run_infer(model, max_seq_len, data_path, infer_path, overwrite = False):
 
 def run_eval(infer_path):
     
-    score = {}
     infer_file = os.path.join(infer_path, 'math_infer.jsonl')
-    assert os.path.exists(infer_file) , f'ERROR: please run inference first!' 
+    assert os.path.exists(infer_file), 'ERROR: please run inference first!' 
 
     results = []
     invalid_outputs = []
     with jsonlines.open(infer_file) as f:
         for item in f.iter(type=dict, skip_invalid=True):
             pred = extract_ans(item['completion'], item['target_ans'])
-            if pred != None:
-                results.append(math_util.is_equiv(pred, item['target_ans']))
-            else:
+            if pred is None:
                 results.append(False)
                 temp = {
                     'output_split': re.split("Problem:", item['completion'], flags=re.IGNORECASE)[0], 
@@ -192,8 +187,9 @@ def run_eval(infer_path):
                 }
                 invalid_outputs.append(temp)
 
-    score['TOTAL_AVERAGE'] = '%.4f' %(sum(results) / len(results))
-
+            else:
+                results.append(math_util.is_equiv(pred, item['target_ans']))
+    score = {'TOTAL_AVERAGE': '%.4f' % (sum(results) / len(results))}
     return score, invalid_outputs
 
 def main(args):

@@ -182,15 +182,16 @@ def convert_merged_ckpt_to_hf(
             ("attention_norm.weight", "input_layernorm.weight"),
             ("ffn_norm.weight", "post_attention_layernorm.weight"),
         ]:
-            dst_key = f"model.layers.{i}." + dst_key
-            src_key = f"llma.layers.{i}." + src_key
+            dst_key = f"model.layers.{i}.{dst_key}"
+            src_key = f"llma.layers.{i}.{src_key}"
             value = merged_state_dict[src_key]
             if "q_proj" in dst_key or "k_proj" in dst_key:
                 # to be compatible with HuggingFace's pos embed implementation.
-                if "q_proj" in dst_key:
-                    n_heads = params["n_heads"]
-                else:  # "k_proj" in dst_key:
-                    n_heads = params.get("n_kv_heads", params["n_heads"])
+                n_heads = (
+                    params["n_heads"]
+                    if "q_proj" in dst_key
+                    else params.get("n_kv_heads", params["n_heads"])
+                )
                 head_dim = value.size(0) // n_heads
                 in_dim = value.size(1)
                 value = value.view(
@@ -208,9 +209,10 @@ def convert_merged_ckpt_to_hf(
     ]:
         hf_ckpts[-1][dst_key] = merged_state_dict[src_key]
         del merged_state_dict[src_key]
-    assert len(merged_state_dict) == 0, (
-        "Unknown key(s) in the source state dict: "
-        + ", ".join(merged_state_dict.keys())
+    assert (
+        not merged_state_dict
+    ), "Unknown key(s) in the source state dict: " + ", ".join(
+        merged_state_dict.keys()
     )
 
     return hf_ckpts

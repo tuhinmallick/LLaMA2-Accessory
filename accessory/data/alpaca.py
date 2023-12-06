@@ -52,20 +52,19 @@ class FinetuneDataset(Dataset):
         #   prior experiments and runs, exists.
         if not cache_on_disk:
             need_collect_anno = True
-        else:
-            if rank != 0 :
-                need_collect_anno = False
+        elif rank == 0:
+            if (Path(self.cache_dir)/'data.h5').exists() and (Path(self.cache_dir)/'ready').exists():
+                need_collect_anno = False  # off-the-shelf annotation cache exists
+                print(f"Use existing h5 data cache: {Path(self.cache_dir)}\n"
+                      f"Note: if the actual data defined by {config_path} has changed since your last run, "
+                      f"please delete the cache manually and re-run this expeirment, or the data actually used "
+                      f"will not be updated")
             else:
-                if (Path(self.cache_dir)/'data.h5').exists() and (Path(self.cache_dir)/'ready').exists():
-                    need_collect_anno = False  # off-the-shelf annotation cache exists
-                    print(f"Use existing h5 data cache: {Path(self.cache_dir)}\n"
-                          f"Note: if the actual data defined by {config_path} has changed since your last run, "
-                          f"please delete the cache manually and re-run this expeirment, or the data actually used "
-                          f"will not be updated")
-                else:
-                    need_collect_anno = True
+                need_collect_anno = True
 
 
+        else:
+            need_collect_anno = False
         if need_collect_anno:
             group_ann = {}
             for meta in self.config['META']:
@@ -111,7 +110,7 @@ class FinetuneDataset(Dataset):
                 group_ann[meta_type] += meta_l
 
             # sort group_ann for higher efficiency (items in one global batch with similar length)
-            for meta_type, meta_l in group_ann.items():
+            for meta_l in group_ann.values():
                 meta_l.sort(
                     key=lambda data_item: len(format_prompt(data_item, data_item["sys_prompt"]) + data_item['output'])
                 )
@@ -136,7 +135,7 @@ class FinetuneDataset(Dataset):
                     file.create_dataset("group_indice_range", data=json.dumps(group_indice_range))
                 with open(Path(self.cache_dir)/'ready', 'w') as f:
                     f.write("ready")
-                print(f"data cache built")
+                print("data cache built")
 
         if self.cache_on_disk:
             while not (Path(self.cache_dir)/'ready').exists():
@@ -216,14 +215,14 @@ class MetaPreprocessor:
 
     @ staticmethod
     def _preprocess_single_turn_llava(meta_l: List[Dict]):
-        new_meta = []
-        for data_item in meta_l:
-            new_meta.append({
+        return [
+            {
                 "image": data_item['image'],
                 "instruction": data_item['conversations'][0]['value'],
-                "output": data_item['conversations'][1]['value']
-            })
-        return new_meta
+                "output": data_item['conversations'][1]['value'],
+            }
+            for data_item in meta_l
+        ]
 
     @ staticmethod
     def _preprocess_caption(meta_l: List[Dict]):
@@ -263,7 +262,7 @@ class FinetuneDistSampler(Sampler):
         len_groups = [len(_) // global_bsz * global_bsz for _ in group_indices]
         group_indices = [indices[:len_indices] for indices, len_indices in zip(group_indices, len_groups)]
         group_n_batch = [len(_)//batch_size for _ in group_indices]
-        assert all([_%num_replicas==0 for _ in group_n_batch])
+        assert all(_%num_replicas==0 for _ in group_n_batch)
         n_total_batch = sum(group_n_batch)
 
         assert n_total_batch % self.num_replicas == 0

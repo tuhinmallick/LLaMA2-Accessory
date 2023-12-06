@@ -83,8 +83,7 @@ def get_args_parser():
 
 def format_prompt(prompt):
 
-    prompt_t=f"Below is an instruction that describes a task.\nWrite a response that appropriately completes the request.\n\n### Instruction:\n{prompt}\n\n### Response:"
-    return prompt_t
+    return f"Below is an instruction that describes a task.\nWrite a response that appropriately completes the request.\n\n### Instruction:\n{prompt}\n\n### Response:"
     
 
 def split_list(lst, n):
@@ -139,9 +138,7 @@ def generate_output(model, img_path,prompt):
         image = image.cuda()
     with torch.cuda.amp.autocast(dtype=torch.bfloat16):
         results = model.generate([_prompt], image, max_gen_len=512, temperature=0.1, top_p=0.7)
-    text_output = results[0].strip()
-    
-    return text_output
+    return results[0].strip()
 
 
 
@@ -151,28 +148,27 @@ def eval_llava_benchmark(model, args):
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
     answers_file = os.path.expanduser(args.answers_file)
     os.makedirs(os.path.dirname(answers_file), exist_ok=True)
-    ans_file = open(answers_file, "w")
-    for line in tqdm(questions):
-        idx = line["question_id"]
-        image_file = line["image"]
-        qs = line["text"]
-        cur_prompt = qs
-        image_path = os.path.join(args.image_folder, image_file)
-        prompt = qs
+    with open(answers_file, "w") as ans_file:
         times=0
-        output_text = generate_output(
-            model = model,
-            img_path=image_path,
-            prompt=prompt)
-        ans_id = shortuuid.uuid()
-        ans_file.write(json.dumps({"question_id": idx,
-                                   "prompt": cur_prompt,
-                                   "text": output_text,
-                                   "answer_id": ans_id,
-                                   "model_id": model_name,
-                                   "metadata": {}}) + "\n")
-        ans_file.flush()
-    ans_file.close()
+        for line in tqdm(questions):
+            idx = line["question_id"]
+            image_file = line["image"]
+            qs = line["text"]
+            cur_prompt = qs
+            image_path = os.path.join(args.image_folder, image_file)
+            prompt = qs
+            output_text = generate_output(
+                model = model,
+                img_path=image_path,
+                prompt=prompt)
+            ans_id = shortuuid.uuid()
+            ans_file.write(json.dumps({"question_id": idx,
+                                       "prompt": cur_prompt,
+                                       "text": output_text,
+                                       "answer_id": ans_id,
+                                       "model_id": model_name,
+                                       "metadata": {}}) + "\n")
+            ans_file.flush()
     
 
 def get_eval(content: str, max_tokens: int):
@@ -207,9 +203,8 @@ def parse_score(review):
         sp = score_pair.split(' ')
         if len(sp) == 2:
             return [float(sp[0]), float(sp[1])]
-        else:
-            print('error', review)
-            return [-1, -1]
+        print('error', review)
+        return [-1, -1]
     except Exception as e:
         print(e)
         print('error', review)
@@ -230,53 +225,51 @@ def eval_gpt4(args):
     else:
         cur_reviews = []
 
-    review_file = open(f'{args.output}', 'a')
+    with open(f'{args.output}', 'a') as review_file:
+        context_list = [json.loads(line) for line in open(os.path.expanduser(args.context))]
+        image_to_context = {context['image']: context for context in context_list}
 
-    context_list = [json.loads(line) for line in open(os.path.expanduser(args.context))]
-    image_to_context = {context['image']: context for context in context_list}
+        handles = []
+        idx = 0
+        for ques_js, ans1_js, ans2_js in zip(f_q, f_ans1, f_ans2):
+            ques = json.loads(ques_js)
+            ans1 = json.loads(ans1_js)
+            ans2 = json.loads(ans2_js)
 
-    handles = []
-    idx = 0
-    for ques_js, ans1_js, ans2_js in zip(f_q, f_ans1, f_ans2):
-        ques = json.loads(ques_js)
-        ans1 = json.loads(ans1_js)
-        ans2 = json.loads(ans2_js)
+            inst = image_to_context[ques['image']]
+            cap_str = '\n'.join(inst['caption'])
+            #box_str = '\n'.join([f'{instance["category"]}: {instance["bbox"]}' for instance in inst['instances']])
 
-        inst = image_to_context[ques['image']]
-        cap_str = '\n'.join(inst['caption'])
-        #box_str = '\n'.join([f'{instance["category"]}: {instance["bbox"]}' for instance in inst['instances']])
-
-        category = json.loads(ques_js)['category']
-        if category in rule_dict:
-            rule = rule_dict[category]
-        else:
-            assert False, f"Visual QA category not found in rule file: {category}."
-        prompt = rule['prompt']
-        role = rule['role']
-        content = (f'[Context]\n{cap_str}\n\n'
-                   f'[Question]\n{ques["text"]}\n\n'
-                   f'[{role} 1]\n{ans1["text"]}\n\n[End of {role} 1]\n\n'
-                   f'[{role} 2]\n{ans2["text"]}\n\n[End of {role} 2]\n\n'
-                   f'[System]\n{prompt}\n\n')
-        cur_js = {
-            'id': idx+1,
-            'question_id': ques['question_id'],
-            'answer1_id': ans1.get('answer_id', ans1['question_id']),
-            'answer2_id': ans2.get('answer_id', ans2['answer_id']),
-            'category': category
-        }
-        if idx >= len(cur_reviews):
-            review = get_eval(content, args.max_tokens)
-            scores = parse_score(review)
-            cur_js['content'] = review
-            cur_js['tuple'] = scores
-            review_file.write(json.dumps(cur_js) + '\n')
-            review_file.flush()
-        else:
-            print(f'Skipping {idx} as we already have it.')
-        idx += 1
-        print(idx)
-    review_file.close()
+            category = json.loads(ques_js)['category']
+            if category in rule_dict:
+                rule = rule_dict[category]
+            else:
+                assert False, f"Visual QA category not found in rule file: {category}."
+            prompt = rule['prompt']
+            role = rule['role']
+            content = (f'[Context]\n{cap_str}\n\n'
+                       f'[Question]\n{ques["text"]}\n\n'
+                       f'[{role} 1]\n{ans1["text"]}\n\n[End of {role} 1]\n\n'
+                       f'[{role} 2]\n{ans2["text"]}\n\n[End of {role} 2]\n\n'
+                       f'[System]\n{prompt}\n\n')
+            cur_js = {
+                'id': idx+1,
+                'question_id': ques['question_id'],
+                'answer1_id': ans1.get('answer_id', ans1['question_id']),
+                'answer2_id': ans2.get('answer_id', ans2['answer_id']),
+                'category': category
+            }
+            if idx >= len(cur_reviews):
+                review = get_eval(content, args.max_tokens)
+                scores = parse_score(review)
+                cur_js['content'] = review
+                cur_js['tuple'] = scores
+                review_file.write(json.dumps(cur_js) + '\n')
+                review_file.flush()
+            else:
+                print(f'Skipping {idx} as we already have it.')
+            idx += 1
+            print(idx)
 
 
 def show_score(args):

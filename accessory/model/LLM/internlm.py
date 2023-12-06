@@ -118,21 +118,12 @@ class MHA(nn.Module):
             values = self.v_cache[:bsz, :start_pos + seqlen]
 
         is_causal = isinstance(mask, str) and mask == "causal"
-        # "causal" dispatches to flash_attn only when q and k have the same seqlen
-        # because currently the flash_attn causal impl for unequal q & k length is not suited
-        # for generation: Generation with cache requires aligning on the right, while the
-        # current flash_attn impl aligns on the left. For example, we expect the mask to be
-        # as the left one, while the current flash_attn impl gives the right one
-        #
-        #              K                     K
-        #        1 1 1 1 1 0 0         1 0 0 0 0 0 0
-        #     Q  1 1 1 1 1 1 0       Q 1 1 0 0 0 0 0
-        #        1 1 1 1 1 1 1         1 1 1 0 0 0 0
-        use_flash = (
+        if use_flash := (
             self.flash  # user configuration
-            and (mask is None or (is_causal and keys.size(1) == xq.size(1)))  # supported mask
-        )
-        if use_flash:
+            and (
+                mask is None or (is_causal and keys.size(1) == xq.size(1))
+            )  # supported mask
+        ):
             # repeating k/v heads is included in flash_attn
             output = flash_attn_func(xq, keys, values, dropout_p=0.0, causal=is_causal)
             output = output.contiguous().view(bsz, seqlen, -1)
@@ -141,11 +132,10 @@ class MHA(nn.Module):
             keys = keys.transpose(1, 2)
             values = values.transpose(1, 2)
             if isinstance(mask, str):
-                if is_causal:
-                    mask = self._make_causal_mask(xq.size(2), keys.size(2))
-                    mask = mask.to(xq.device, non_blocking=True)
-                else:
+                if not is_causal:
                     raise NotImplementedError()
+                mask = self._make_causal_mask(xq.size(2), keys.size(2))
+                mask = mask.to(xq.device, non_blocking=True)
             output = F.scaled_dot_product_attention(xq, keys, values, dropout_p=0.0, attn_mask=mask)
             output = output.transpose(
                 1, 2
@@ -166,8 +156,7 @@ class MHA(nn.Module):
     def _make_causal_mask(self, q_len: int, kv_len: int) -> torch.Tensor:
         q_indices = torch.arange(q_len) - q_len
         kv_indices = torch.arange(kv_len) - kv_len
-        causal_mask_bool = q_indices.view(-1, 1) >= kv_indices.view(1, -1)
-        return causal_mask_bool
+        return q_indices.view(-1, 1) >= kv_indices.view(1, -1)
 
 class FeedForward(nn.Module):
     def __init__(
@@ -249,11 +238,10 @@ class PackedFlashBaseLayer1D(nn.Module):
                         torch.nn.init.normal_(param.data, mean=0.0, std=0.006 / math.sqrt(2.0 * self.layer_idx + 1))
                     else:
                         normal_(param.data, std=0.006 if "w1" in name or "w2" in name else 0.0015)
+                elif self.use_scaled_init and "fc1" not in name:
+                    torch.nn.init.normal_(param.data, mean=0.0, std=0.006 / math.sqrt(2.0 * self.layer_idx + 1))
                 else:
-                    if self.use_scaled_init and "fc1" not in name:
-                        torch.nn.init.normal_(param.data, mean=0.0, std=0.006 / math.sqrt(2.0 * self.layer_idx + 1))
-                    else:
-                        normal_(param.data, std=0.006 if "fc1" in name else 0.0015)
+                    normal_(param.data, std=0.006 if "fc1" in name else 0.0015)
 
     def forward(
         self, x: torch.Tensor, start_pos: int, freqs_cis: torch.Tensor,
@@ -317,11 +305,7 @@ class Transformer(nn.Module):
         self.cache_image_words = 0 # for inference
 
     def get_trainable_params(self):
-        trainable = {}
-        for name, para in self.named_parameters():
-            trainable[name] = para
-
-        return trainable
+        return dict(self.named_parameters())
 
 
     def forward(self, examples, image=None):
@@ -334,7 +318,7 @@ class Transformer(nn.Module):
         self.freqs_cis = self.freqs_cis.to(h.device)
 
         freqs_cis = self.freqs_cis[:seqlen]
-        for _, layer in enumerate(self.layers):
+        for layer in self.layers:
             h = layer(
                 h,
                 start_pos=0,
@@ -357,15 +341,14 @@ class Transformer(nn.Module):
 
         if image is not None:
             raise NotImplementedError
+        if start_pos == 0:
+            self.cache_image_words = 0
+            freqs_cis = self.freqs_cis[:seqlen]
         else:
-            if start_pos == 0:
-                self.cache_image_words = 0
-                freqs_cis = self.freqs_cis[0: seqlen]
-            else:
                 # if image was not None when start_pos=0,
                 # the offset should be added to start_pos within later forward_inference calls
-                start_pos = start_pos + self.cache_image_words
-                freqs_cis = self.freqs_cis[start_pos: start_pos + seqlen]
+            start_pos += self.cache_image_words
+            freqs_cis = self.freqs_cis[start_pos: start_pos + seqlen]
 
         # Despite that "causal" also works for seqlen == 1, keep it to None for possibly
         # better performance
@@ -375,8 +358,7 @@ class Transformer(nn.Module):
             h = layer(h, start_pos, freqs_cis, mask)
 
         h = self.norm(h)
-        output = self.head(h[:, -1, :])  # only compute last logits
-        return output
+        return self.head(h[:, -1, :])
 
     def _allocate_kv_cache(self, max_batch_size: int) -> None:
         for layer in self.layers:

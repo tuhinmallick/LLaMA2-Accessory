@@ -55,23 +55,20 @@ def get_args_parser():
 
 def format_subject(subject):
     l = subject.split("_")
-    s = ""
-    for entry in l:
-        s += " " + entry
-    return s
+    return "".join(" " + entry for entry in l)
 
 def format_example(df, idx, include_answer=True):
     prompt = df.iloc[idx, 0]
     k = df.shape[1] - 2
     for j in range(k):
-        prompt += "\n{}. {}".format(choices[j], df.iloc[idx, j+1])
+        prompt += f"\n{choices[j]}. {df.iloc[idx, j + 1]}"
     prompt += "\nAnswer:"
     if include_answer:
-        prompt += " {}\n\n".format(df.iloc[idx, k + 1])
+        prompt += f" {df.iloc[idx, k + 1]}\n\n"
     return prompt
 
 def generate_few_shot_prompt(train_df, subject, k=-1):
-    prompt = "The following are multiple choice questions (with answers) about {}.\n\n".format(format_subject(subject))
+    prompt = f"The following are multiple choice questions (with answers) about {format_subject(subject)}.\n\n"
     if k == -1:
         k = train_df.shape[0]
     for i in range(k):
@@ -108,10 +105,7 @@ def load(args):
 
 def extract_ans(ans):
     ans = ans.strip()
-    if ans != '':
-        return ans[-1]
-    else:
-        return None
+    return ans[-1] if ans != '' else None
 
 def batch_data(prompts, batch_size=1):
     batch_data = []
@@ -143,9 +137,9 @@ def run_infer(model, max_seq_len, tasks, infer_path, ntrain=5, overwrite = False
             print(f"{task_infer_path} existed, skip!")
             continue
 
-        print('Testing %s ...' % task)
+        print(f'Testing {task} ...')
         dev_df = pd.read_csv(os.path.join(args.data_dir, "data/dev", task + "_dev.csv"), header=None)[:args.ntrain]
-        test_df = pd.read_csv(os.path.join(args.data_dir, "data/test", task + "_test.csv"), header=None) 
+        test_df = pd.read_csv(os.path.join(args.data_dir, "data/test", task + "_test.csv"), header=None)
         few_shot_prompt = generate_few_shot_prompt(dev_df, task, ntrain)
 
         test_set = []
@@ -157,24 +151,22 @@ def run_infer(model, max_seq_len, tasks, infer_path, ntrain=5, overwrite = False
                 max_seq_len,
                 few_shot_prompt+prompt
             )
-            
+
             test_set.append(full_prompt)
             target_ans = test_df.iloc[i, test_df.shape[1]-1]
             answer_set.append(target_ans)
-            
+
         batch_prompt = batch_data(test_set, batch_size=8)
 
         res_completions = []
         for batch_input in tqdm(batch_prompt):
             
             outputs = model.generate(prompts=batch_input, images=None, max_gen_len=1)
-            
-            for output in outputs:
-                res_completions.append(output)
-        
+
+            res_completions.extend(iter(outputs))
         torch.distributed.barrier()
         if torch.distributed.get_rank() == 0:
-            
+
             with jsonlines.open(task_infer_path, mode='w') as writer:
                 for (completion, prompt_answer) in zip(res_completions, answer_set):
                     record = {
@@ -199,7 +191,7 @@ def run_eval(tasks, infer_path):
         with jsonlines.open(task_infer_path) as f:
             for item in f.iter(type=dict, skip_invalid=True):
                 pred = extract_ans(item['completion'])
-                if pred == None:
+                if pred is None:
                     invalid.append(
                         {'output': item['completion'],
                         'answer': item['target_ans']}

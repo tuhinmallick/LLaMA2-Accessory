@@ -100,15 +100,11 @@ def extract_ans(ans, mode):
         return ans
     else:
         ans = ans_line[-1].strip()
-    
+
     if mode == 'multiple_choice':
-        match = re.search(r'\(([A-Z])\)*', ans)
-        if match:
+        if match := re.search(r'\(([A-Z])\)*', ans):
             return match.group(1)
-        match = re.search(r'([A-Z])', ans)
-        if match:
-            return match.group(1)
-        return ans
+        return match.group(1) if (match := re.search(r'([A-Z])', ans)) else ans
     elif mode == 'free_form':
         ans = re.split(r'[.#]', ans)[0]
         return ans
@@ -160,22 +156,20 @@ def run_infer(model, max_seq_len, tasks, data_path, infer_path, mode, overwrite 
                 item['input'] + 
                 "\nA: Let's think step by step."
             )
-            
+
             test_set.append(full_prompt)
-            if mode == 'multiple_choice':
-                answer_set.append(item['target'][1])
-            elif mode == 'free_form':
+            if mode == 'free_form':
                 answer_set.append(item['target'])
-            
+
+            elif mode == 'multiple_choice':
+                answer_set.append(item['target'][1])
         batch_prompt = batch_data(test_set, batch_size=8)
         res_completions = []
         for batch_input in tqdm(batch_prompt):
             
             outputs = model.generate(prompts=batch_input, images=None, max_gen_len=1024)
-            
-            for output in outputs:
-                res_completions.append(output)
 
+            res_completions.extend(iter(outputs))
         torch.distributed.barrier()
         if torch.distributed.get_rank() == 0:
             with jsonlines.open(task_infer_path, mode='w') as writer:
@@ -209,27 +203,27 @@ def run_eval(tasks, infer_path, mode):
 
 def main(args, multiple_choice_tasks=MULTIPLE_CHOICE_TASKS, free_form_tasks=FREE_FORM_TASKS):
 
-    run_multiple_choice = args.task == 'all' or args.task == 'multiple_choice'
-    run_free_form = args.task == 'all' or args.task == 'free_form'
+    run_multiple_choice = args.task in ['all', 'multiple_choice']
+    run_free_form = args.task in ['all', 'free_form']
 
     path_split = args.pretrained_path[0].split('/') if isinstance(args.pretrained_path,list) else args.pretrained_path.split('/')
     if path_split[-1] == '':
         path_split.pop(-1)
-    model_name = path_split[-1] 
+    model_name = path_split[-1]
     infer_path = os.path.join('results', model_name, 'bbh/infer')
     os.makedirs(infer_path, exist_ok=True)
     eval_path = os.path.join('results', model_name, 'bbh/eval')
     os.makedirs(eval_path, exist_ok=True)
 
     model = load(args)
-    
+
 
     if run_multiple_choice:
         run_infer(model, args.max_seq_len, multiple_choice_tasks, args.data_dir, infer_path, 'multiple_choice', args.overwrite)
     if run_free_form:
         run_infer(model, args.max_seq_len, free_form_tasks, args.data_dir, infer_path, 'free_form', args.overwrite)
-    
-    
+
+
     torch.distributed.barrier()
     if torch.distributed.get_rank() == 0:
 
@@ -246,12 +240,12 @@ def main(args, multiple_choice_tasks=MULTIPLE_CHOICE_TASKS, free_form_tasks=FREE
 
         if args.task == 'all':
             score['TOTAL'] = '%.4f' %(sum(total_results) / len(total_results))
-        
+
         result_path = os.path.join(eval_path, 'run_results.json')
 
         with open(result_path, 'w') as f:
             json.dump(score, f, ensure_ascii=False, indent=2) 
-    
+
     return 
 
 if __name__ == '__main__':

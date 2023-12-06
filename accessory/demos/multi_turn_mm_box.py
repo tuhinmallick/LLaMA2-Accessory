@@ -228,8 +228,9 @@ def show_mask(img: Image, mask: torch.Tensor, color):
     alpha_mask = (mask * alpha_value).byte()
     mask_img = Image.new("RGB", img.size, color)
 
-    blended_img = Image.composite(mask_img, img, Image.fromarray(alpha_mask.cpu().numpy(), "L"))
-    return blended_img
+    return Image.composite(
+        mask_img, img, Image.fromarray(alpha_mask.cpu().numpy(), "L")
+    )
 
 def draw_box_mask_on_image(img: Image, l_name_box_color, predictor):
     max_edge = max((img.width, img.height))
@@ -278,7 +279,7 @@ def draw_box_mask_on_image(img: Image, l_name_box_color, predictor):
         if edge_s_name in key_point_cache and edge_t_name in key_point_cache:
             draw.line([key_point_cache[edge_s_name], key_point_cache[edge_t_name]], fill="green", width=3)
 
-    if len(boxes) > 0:
+    if boxes:
         img_mask = img.copy()
         img_array = np.array(img)
         predictor.set_image(img_array)

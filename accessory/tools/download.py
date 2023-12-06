@@ -27,7 +27,7 @@ def download_files(repo_id, subfolder, file_names, output_path):
         download_file(repo_id, subfolder, file_name, output_path)
 
 def get_file_names(prefix, model_size):
-    return [prefix + 'tokenizer.model', prefix + f"{model_size}_params.json"]
+    return [f'{prefix}tokenizer.model', f"{prefix}{model_size}_params.json"]
 
 def ask_question(prompt, options, default_value=None):
     while True:
@@ -45,12 +45,11 @@ def ask_question(prompt, options, default_value=None):
 def interactive_mode(args):
     args.train_type = args.train_type or ask_question("Choose a train type:", ['finetune', 'convert'])
     args.input_type = args.input_type or ask_question(f"\nChoose an input type for {args.train_type}:", ['sg', 'mm'])
-    
 
-    models = model_list.get(args.train_type, {}).get(args.input_type, [])
-    if models:
+
+    if models := model_list.get(args.train_type, {}).get(args.input_type, []):
         args.model_name = args.model_name or ask_question("\nChoose a model:", models)
-    
+
     args.model_size = args.model_size or ask_question("\nChoose a model size:", ['7B', '13B', '34B', '70B', '180B'])
     config_choice = ask_question("\nDownload which version of params.json and tokenizer.model?", ['LLaMA2', 'InterLM', 'CodeLlama', 'SPHINX', 'no'])
     if config_choice != 'no':
@@ -80,12 +79,12 @@ def get_args_parser():
 def main():
     args = get_args_parser().parse_args()
     interactive_mode(args)
-    
+
     if not os.path.exists(args.output_path):
         os.makedirs(args.output_path)
 
     subfolder = f"{args.train_type}/{args.input_type}/{args.model_name}"
-    repo_id = f"Alpha-VLLM/LLaMA2-Accessory"
+    repo_id = "Alpha-VLLM/LLaMA2-Accessory"
 
     if args.down_config:
         files_to_download = []
@@ -115,7 +114,7 @@ def main():
         else:
             file_name = f"consolidated.{num:02d}-of-{max_num:02d}.model.pth"
         download_file(repo_id, subfolder, file_name, args.output_path)
-    
+
     print(f"{args.model_name} model files downloaded successfully to {args.output_path}")
 
 if __name__ == '__main__':

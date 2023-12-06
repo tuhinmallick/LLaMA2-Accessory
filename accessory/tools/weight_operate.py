@@ -17,31 +17,28 @@ def get_args_parser():
 def calculate_weight_delta(original_model, fine_tuned_model, num, max_num):
     original_state_dict = {key: val.float() for key, val in original_model.items()}
     fine_tuned_state_dict = {key: val.float() for key, val in fine_tuned_model['model'].items()}
-    delta_state_dict = {}
-
-    for key, val in fine_tuned_state_dict.items():
-        delta_state_dict[key] = val - original_state_dict.get(key[5:], 0)
-
-
+    delta_state_dict = {
+        key: val - original_state_dict.get(key[5:], 0)
+        for key, val in fine_tuned_state_dict.items()
+    }
     consolidated_model_state_dict = {
         "model": {key: val.half() for key, val in delta_state_dict.items()}
     }
-    
+
     save_path = os.path.join(
         args.output_path,
         f"consolidated.{num:02d}-of-{max_num:02d}.model-diff.pth", 
     )
-    
+
     torch.save(consolidated_model_state_dict, save_path)
 
 
 def merge_weights_and_save(original_model, delta_weights, num, max_num):
     original_state_dict = {key: val.float() for key, val in original_model.items()}
     delta_weights_dict = {key: val.float() for key, val in delta_weights['model'].items()}
-    new_state_dict = {}
-
-    for key, val in original_state_dict.items():
-        new_state_dict['llma.'+key] = val
+    new_state_dict = {
+        f'llma.{key}': val for key, val in original_state_dict.items()
+    }
     for key, val in delta_weights_dict.items():
         new_state_dict[key] = val + new_state_dict.get(key, 0)
 

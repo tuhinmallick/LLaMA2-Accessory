@@ -31,7 +31,7 @@ def _get_grad_norm(
     use of this return value is a reduction across ranks.
     """
     params_with_grad = [param for param in params if param.grad is not None]
-    if len(params_with_grad) == 0:
+    if not params_with_grad:
         return torch.tensor(0.0)
     grads = [param.grad for param in params_with_grad]
     grad_dtypes = {grad.dtype for grad in grads}
@@ -39,19 +39,18 @@ def _get_grad_norm(
         raise ValueError(
             f"Requires uniform dtype across all gradients but got {grad_dtypes}"
         )
-    # Compute the gradient norm in FP32, where we treat the gradients as a
-    # single vector
-    grad_norm = torch.linalg.vector_norm(
+    return torch.linalg.vector_norm(
         torch.stack(
             [
-                torch.linalg.vector_norm(grad.detach(), norm_type, dtype=torch.float32)
+                torch.linalg.vector_norm(
+                    grad.detach(), norm_type, dtype=torch.float32
+                )
                 for grad in grads
             ],
         ),
         norm_type,
         dtype=torch.float32,
     )
-    return grad_norm
 
 
 
@@ -118,20 +117,16 @@ def clip_grad_norm(
         target_set = (
             sharded_params if handle.uses_sharded_strategy else nonsharded_params
         )
-        if handle._use_orig_params:
-            for param in handle.flat_param._params:
-                if getattr(param, "is_model_parallel", False) or cal_non_split_norm:
-                    target_set.add(param)
-                else:
-                    model_parallel_ignore_params.add(param)
-
-                if getattr(param, "is_model_parallel", False):
-                    model_parallel_params.add(param)
-        else:
+        if not handle._use_orig_params:
             raise NotImplementedError("FSD use_orig_params is needed for grad clip with model parallel")
-            # target_set.add(handle.flat_param)
-            # if handle.flat_param.grad is not None:
-            #     grads.append(handle.flat_param.grad)
+        for param in handle.flat_param._params:
+            if getattr(param, "is_model_parallel", False) or cal_non_split_norm:
+                target_set.add(param)
+            else:
+                model_parallel_ignore_params.add(param)
+
+            if getattr(param, "is_model_parallel", False):
+                model_parallel_params.add(param)
     for param in model.parameters():
         if param.grad is not None:
             grads.append(param.grad)
@@ -155,7 +150,7 @@ def clip_grad_norm(
         model.compute_device
     )
     # Warn if mp_world_size > 1 but model_parallel_params is empty
-    if mp_world_size > 1 and len(model_parallel_params) == 0:
+    if mp_world_size > 1 and not model_parallel_params:
         Warning("mp_world_size > 1 but model_parallel_params is empty, are model parallel params correctly marked?")
     # print(f"len of mp_parallel_params: {len(model_parallel_params)}")
     # print(f"[{dp_rank}][{mp_rank}]: sharded [{len(sharded_params)}] unsharded [{len(nonsharded_params)}]", force=True)
@@ -193,7 +188,7 @@ def clip_grad_norm(
         grad.detach().mul_(clip_coef_clamped.to(grad.device, grad.dtype))
     # Use the "largest" dtype by type promotion semantics to use the same
     # dtype as if we did not force local norm computation to be in FP32
-    if len(grads) == 0:
+    if not grads:
         # If this rank has no gradients, then we must default to FP32
         # unless we use additional communication, which we prefer to avoid
         # since `clip_grad_norm_()` is called in the training loop

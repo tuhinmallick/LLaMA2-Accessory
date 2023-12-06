@@ -9,8 +9,7 @@ def main() -> None:
     world_size = int(os.environ['WORLD_SIZE'])
     rank = int(os.environ["RANK"])
     dist.init_process_group(
-        world_size=world_size, rank=rank,
-        backend="nccl", init_method=f"env://",
+        world_size=world_size, rank=rank, backend="nccl", init_method="env://"
     )
     torch.cuda.set_device(rank)
 

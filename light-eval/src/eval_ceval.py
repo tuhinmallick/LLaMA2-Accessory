@@ -87,10 +87,7 @@ def format_example(line, include_answer=True):
     example = line['question']
     for choice in choices:
         example += f'\n{choice}. {line[f"{choice}"]}'
-    if include_answer:
-        example += '\n答案：' + line["answer"] + '\n\n'
-    else:
-        example += '\n答案：'
+    example += '\n答案：' + line["answer"] + '\n\n' if include_answer else '\n答案：'
     return example
 
 def generate_few_shot_prompt(subject, dev_df, ntrain=-1):
@@ -108,7 +105,7 @@ def extract_ans_by_logits(tokenizer, logits):
 
     assert logits.shape[0] == 1
     logits = logits.flatten()
-    
+
     softval = torch.nn.functional.softmax(
         torch.tensor(
             [
@@ -128,9 +125,7 @@ def extract_ans_by_logits(tokenizer, logits):
         softval = softval.to(dtype=torch.float32)
     probs = softval.detach().cpu().numpy()
 
-    pred = {0: "A", 1: "B", 2: "C", 3: "D"}[np.argmax(probs)]
-
-    return pred
+    return {0: "A", 1: "B", 2: "C", 3: "D"}[np.argmax(probs)]
 
 def resize_prompt(tokenizer, model_max_context, prompt):
 
@@ -146,7 +141,7 @@ def run_infer_eval(model, max_seq_len, data_path, ntrain=-1, few_shot = True):
     total_results = {}
     for task in TASK_NAME_MAPPING.keys():
 
-        print('Testing %s ...' % task)
+        print(f'Testing {task} ...')
         val_file_path = os.path.join(data_path, "val", f"{task}_val.csv")
         val_df = pd.read_csv(val_file_path)
         dev_file_path = os.path.join(data_path, "dev", f"{task}_dev.csv")

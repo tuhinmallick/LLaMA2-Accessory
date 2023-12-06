@@ -77,7 +77,7 @@ if args.quant:
     )
     quantize(model, quantization_config)
 
-print("Model = %s" % str(model))
+print(f"Model = {str(model)}")
 model.bfloat16().cuda()
 
 
@@ -101,8 +101,7 @@ def generate(
     else:
         with torch.cuda.amp.autocast(dtype=target_dtype):
             results = model.generate([_prompt], image, max_gen_len=max_gen_len, temperature=gen_t, top_p=top_p)
-    text_output = results[0].strip()
-    return text_output
+    return results[0].strip()
 
 def create_demo():
     with gr.Blocks() as demo:
@@ -147,7 +146,7 @@ def worker_func():
             _ = model.generate([_prompt], image, max_gen_len=max_gen_len, temperature=gen_t, top_p=top_p, )
 
 if dist.get_rank() == 0:
-    description = f"""
+    description = """
     # Single-turn demo🚀
     """
 

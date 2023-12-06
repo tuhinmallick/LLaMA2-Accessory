@@ -2,16 +2,14 @@
 def last_boxed_only(sample):
     q, a = sample
     a = last_boxed_only_string(a)
-    if a == None:
-        return None
-    return (q, a)
+    return None if a is None else (q, a)
 
 def last_boxed_only_string(string):
     idx = string.rfind("\\boxed")
     if idx < 0:
         idx = string.rfind("\\fbox")
-        if idx < 0:
-            return None
+    if idx < 0:
+        return None
 
     i = idx
     right_brace_idx = None
@@ -25,27 +23,22 @@ def last_boxed_only_string(string):
                 right_brace_idx = i
                 break
         i += 1
-    
-    if right_brace_idx == None:
-        retval = None
-    else:
-        retval = string[idx:right_brace_idx + 1]
-    
-    return retval
+
+    return None if right_brace_idx is None else string[idx:right_brace_idx + 1]
 
 def only_until_first_boxed_from_tokens(string, tokens):
     idx = string.find("\\boxed")
     if idx < 0:
         idx = string.find("\\fbox")
-        if idx < 0:
-            return None
-    
+    if idx < 0:
+        return None
+
     cum_length = 0
     for i, t in enumerate(tokens):
         cum_length += len(t)
         if cum_length >= idx:
             break
-    
+
     return tokens[:i]
 
 
@@ -53,10 +46,7 @@ def only_until_first_boxed_from_tokens(string, tokens):
 def clean_numbers(sample):
     if not sample:
         return None
-    new_sample = list()
-    for s in sample:
-        new_sample.append(_clean_numbers(s))
-
+    new_sample = [_clean_numbers(s) for s in sample]
     return tuple(new_sample)
 
 def _clean_numbers(string):
@@ -108,17 +98,16 @@ def fix_fracs(string):
                 a = substr[0]
                 b = substr[1]
                 if b != "{":
-                    if len(substr) > 2:
-                        post_substr = substr[2:]
-                        new_str += "{" + a + "}{" + b + "}" + post_substr
-                    else:
-                        new_str += "{" + a + "}{" + b + "}"
+                    new_str += (
+                        "{" + a + "}{" + b + "}" + substr[2:]
+                        if len(substr) > 2
+                        else "{" + a + "}{" + b + "}"
+                    )
+                elif len(substr) > 2:
+                    post_substr = substr[2:]
+                    new_str += "{" + a + "}" + b + post_substr
                 else:
-                    if len(substr) > 2:
-                        post_substr = substr[2:]
-                        new_str += "{" + a + "}" + b + post_substr
-                    else:
-                        new_str += "{" + a + "}" + b
+                    new_str += "{" + a + "}" + b
     string = new_str
     return string
 
@@ -130,20 +119,17 @@ def fix_a_slash_b(string):
     try:
         a = int(a)
         b = int(b)
-        assert string == "{}/{}".format(a, b)
-        new_string = "\\frac{" + str(a) + "}{" + str(b) + "}"
-        return new_string
+        assert string == f"{a}/{b}"
+        return "\\frac{" + str(a) + "}{" + str(b) + "}"
     except AssertionError:
         return string
 
 def remove_right_units(string):
-    # "\\text{ " only ever occurs (at least in the val set) when describing units
-    if "\\text{ " in string:
-        splits = string.split("\\text{ ")
-        assert len(splits) == 2
-        return splits[0]
-    else:
+    if "\\text{ " not in string:
         return string
+    splits = string.split("\\text{ ")
+    assert len(splits) == 2
+    return splits[0]
 
 def fix_sqrt(string):
     if "\\sqrt" not in string:
@@ -199,7 +185,7 @@ def strip_string(string):
     if len(string) == 0:
         return string
     if string[0] == ".":
-        string = "0" + string
+        string = f"0{string}"
 
     # to consider: get rid of e.g. "k = " or "q = " at beginning
     if len(string.split("=")) == 2:
